@@ -58,19 +58,54 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .block(Block::default().title(" [ 1. SYSTEM IDENTITY ] ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(neon_cyan)));
     f.render_widget(sys_info_widget, t1_chunks[0]);
 
-    // 2. Network Uplink
+    // 2. Network Uplink (Đã lọc card mạng ảo và ưu tiên card chính)
     let mut net_lines = vec![];
-    for (name, data) in &app.networks {
-        if data.received() > 0 || data.transmitted() > 0 {
+    
+    // Sắp xếp các interface để card có traffic (hoặc tên chuẩn) lên đầu
+    let mut sorted_networks: Vec<_> = app.networks.iter().collect();
+    sorted_networks.sort_by(|a, b| b.1.total_received().cmp(&a.1.total_received()));
+
+    for (name, data) in sorted_networks {
+        let name_str = name.as_str().to_lowercase();
+        
+        // Lọc bỏ các card ảo rác thường gặp trên Windows/Linux (như vEthernet, bluetooth, dummy, loopback...)
+        let is_virtual = name_str.contains("vethernet") 
+            || name_str.contains("bluetooth") 
+            || name_str.contains("pseudo") 
+            || name_str.contains("loopback")
+            || name_str.contains("docker");
+
+        if is_virtual {
+            continue; // Bỏ qua không hiển thị
+        }
+
+        // Chỉ hiển thị các card có hoạt động hoặc có tên chuẩn (Wi-Fi, Ethernet, en0, wlan0...)
+        if data.total_received() > 0 || data.total_transmitted() > 0 || name_str.contains("wi-fi") || name_str.contains("ethernet") || name_str.contains("en0") {
+            let rx_kb = data.received() / 1024;
+            let tx_kb = data.transmitted() / 1024;
+            
+            let total_rx_mb = data.total_received() / (1024 * 1024);
+            let total_tx_mb = data.total_transmitted() / (1024 * 1024);
+
             net_lines.push(Line::from(vec![
                 Span::styled(format!(" [{}] ", name), Style::default().fg(neon_yellow).add_modifier(Modifier::BOLD)),
-                Span::styled(format!("↓ {} KB/s  ↑ {} KB/s", data.received()/1024, data.transmitted()/1024), Style::default().fg(neon_cyan)),
             ]));
+            net_lines.push(Line::from(vec![
+                Span::styled(format!("  ↓ {} KB/s ({} MB)", rx_kb, total_rx_mb), Style::default().fg(neon_cyan)),
+            ]));
+            net_lines.push(Line::from(vec![
+                Span::styled(format!("  ↑ {} KB/s ({} MB)", tx_kb, total_tx_mb), Style::default().fg(neon_orange)),
+            ]));
+            
+            // Chỉ hiển thị tối đa 1-2 card mạng chính đang hoạt động mạnh nhất để tránh tràn khung
+            break; 
         }
     }
+
     if net_lines.is_empty() { 
-        net_lines.push(Line::from(Span::styled("  NO ACTIVE NETWORK TRAFFIC", Style::default().fg(Color::DarkGray)))); 
+        net_lines.push(Line::from(Span::styled("  NO ACTIVE NETWORK INTERFACE", Style::default().fg(Color::DarkGray)))); 
     }
+
     let net_widget = Paragraph::new(net_lines)
         .block(Block::default().title(" [ 2. NETWORK UPLINK ] ").borders(Borders::ALL).border_type(BorderType::Rounded).border_style(Style::default().fg(neon_yellow)));
     f.render_widget(net_widget, t1_chunks[1]);
